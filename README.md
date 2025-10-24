@@ -3,7 +3,7 @@
 A lightweight PowerShell framework to benchmark OpenAI-compatible LLM backends (Nexa, FastFlowLM, etc.) running on NPU-enabled Windows machines.
 
 - Backend-agnostic: targets any OpenAI-compatible endpoint
-- Measures: time to first token (TTFB), prompt tokens/sec, generation tokens/sec
+- Measures: time to first token (TTFT), prompt tokens/sec, generation tokens/sec
 - Captures device info: OS, CPU, GPU(s), NPU(s), RAM
 - Outputs a single CSV per run with metrics and context
 
@@ -46,7 +46,7 @@ Notes:
 CSV written to `results/` with columns including:
 - timestamp, hostname, os_version, cpu_name, gpu_names, npu_names, ram_gb
 - backend_name, base_url, model, prompt_id, run_index
-- ttfb_ms, prompt_tokens, prompt_tokens_per_s
+- ttft_ms, prompt_tokens, prompt_tokens_per_s
 - completion_tokens, gen_tokens_per_s, total_time_ms
 - temperature, top_p, seed, runs_per_prompt, max_output_tokens
 

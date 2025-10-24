@@ -429,7 +429,7 @@ function Invoke-OpenAIChatStream {
         if ($completionTokens -ne $null) { $genTps = $null; if ($genSec -gt 0) { $genTps = [Math]::Round($completionTokens / $genSec, 3) } }
 
         [pscustomobject]@{
-            ttfb_ms                 = $ttfbMs
+            ttft_ms                 = $ttfbMs
             total_time_ms           = $totalMs
             prompt_tokens           = $promptTokens
             completion_tokens       = $completionTokens

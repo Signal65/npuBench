@@ -90,7 +90,7 @@ foreach ($p in $BenchPrompts) {
             run_index              = $i
             is_warmup              = ($i -eq 1)
             token_source           = $tokenSource
-            ttfb_ms                = $metrics.ttfb_ms
+            ttft_ms                = $metrics.ttft_ms
             prompt_tokens          = $metrics.prompt_tokens
             prompt_tokens_per_s    = $metrics.prompt_tokens_per_s
             completion_tokens      = $metrics.completion_tokens
@@ -104,7 +104,7 @@ foreach ($p in $BenchPrompts) {
         }
         $rows.Add($row) | Out-Null
 
-        Write-Host ("[{0}/{1}] {2} (run {3}/{4}{5}) -> TTFB {6} ms, gen_tps {7}" -f $runIndex, $totalRuns, $p.id, $i, $RunsPerPrompt, ($(if($i -eq 1){' warmup'}else{''})), $metrics.ttfb_ms, $metrics.gen_tokens_per_s)
+        Write-Host ("[{0}/{1}] {2} (run {3}/{4}{5}) -> TTFT {6} ms, gen_tps {7}" -f $runIndex, $totalRuns, $p.id, $i, $RunsPerPrompt, ($(if($i -eq 1){' warmup'}else{''})), $metrics.ttft_ms, $metrics.gen_tokens_per_s)
     }
 }
 
