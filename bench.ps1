@@ -18,7 +18,8 @@ param(
     [string]$PythonPath = 'python',
     [switch]$TokenizerLocalOnly,
     [switch]$DebugTokenizer,
-    [switch]$IncludeOptional
+    [switch]$IncludeOptional,
+    [switch]$ExcludeWarmupFromCsv
 )
 
 Import-Module -Force "$PSScriptRoot/modules/NpuBench.psm1"
@@ -132,9 +133,10 @@ if (-not $BenchPrompts -or $BenchPrompts.Count -eq 0) {
     exit 1
 }
 
-$rows = New-Object System.Collections.Generic.List[object]
+    $rows = New-Object System.Collections.Generic.List[object]
 $totalRuns = $BenchPrompts.Count * $RunsPerPrompt
 $runIndex = 0
+$promptIdx = 0
 
 foreach ($p in $BenchPrompts) {
     for ($i = 1; $i -le $RunsPerPrompt; $i++) {
@@ -187,12 +189,23 @@ foreach ($p in $BenchPrompts) {
         $rows.Add($row) | Out-Null
 
         Write-Host ("[{0}/{1}] {2} (run {3}/{4}{5}) -> TTFT {6} ms, gen_tps {7}" -f $runIndex, $totalRuns, $p.id, $i, $RunsPerPrompt, ($(if($i -eq 1){' warmup'}else{''})), $metrics.ttft_ms, $metrics.gen_tokens_per_s)
+
+        # Pause between runs of the same prompt (skip after last run)
+        if ($i -lt $RunsPerPrompt) { Start-Sleep -Seconds 5 }
     }
+
+    # Pause between prompts (skip after last prompt)
+    $promptIdx++
+    if ($promptIdx -lt $BenchPrompts.Count) { Start-Sleep -Seconds 60 }
 }
 
 if (-not (Test-Path -LiteralPath $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
 $timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
 $csvPath = Join-Path $OutputDir "bench_${timestamp}.csv"
-$rows | Export-Csv -NoTypeInformation -Path $csvPath -Encoding utf8
+if ($ExcludeWarmupFromCsv) {
+    ($rows | Where-Object { -not $_.is_warmup }) | Export-Csv -NoTypeInformation -Path $csvPath -Encoding utf8
+} else {
+    $rows | Export-Csv -NoTypeInformation -Path $csvPath -Encoding utf8
+}
 
 Write-Host "Results saved to: $csvPath"

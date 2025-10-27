@@ -8,24 +8,6 @@
   },
   "prompts": [
     {
-      "id": "prefill_only_example_1",
-      "category": "Prefill Only",
-      "messages": [
-        { "role": "system", "content": "You are a helpful assistant." },
-        { "role": "user", "content": "" }
-      ],
-      "max_output_tokens": 1
-    },
-    {
-      "id": "generate_only_example_1",
-      "category": "Generate Only",
-      "messages": [
-        { "role": "system", "content": "You are a helpful assistant." },
-        { "role": "user", "content": "Write the word 'hello' repeatedly, separated by spaces." }
-      ],
-      "max_output_tokens": 512
-    },
-    {
       "id": "content_generation_example_1",
       "category": "Content Generation",
       "messages": [
