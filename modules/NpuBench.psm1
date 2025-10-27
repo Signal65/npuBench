@@ -184,6 +184,7 @@ function Get-OpenAICompletionData {
         [double]$Temperature = 0,
         [double]$TopP = 1,
         [int]$Seed,
+        [string[]]$Stop,
         [string]$ApiKey,
         [switch]$SkipCertificateCheck,
         [int]$TimeoutSec = 600
@@ -206,6 +207,7 @@ function Get-OpenAICompletionData {
             temperature = $Temperature
             top_p       = $TopP
         }
+        if ($Stop -and $Stop.Count -gt 0) { $body.stop = $Stop }
         if ($MaxTokens -ne $null) { $body.max_tokens = $MaxTokens }
         if ($Seed -ne $null) { $body.seed = $Seed }
         $json = ($body | ConvertTo-Json -Depth 8)
@@ -240,6 +242,7 @@ function Get-OpenAIUsage {
         [double]$Temperature = 0,
         [double]$TopP = 1,
         [int]$Seed,
+        [string[]]$Stop,
         [string]$ApiKey,
         [switch]$SkipCertificateCheck,
         [int]$TimeoutSec = 600,
@@ -273,6 +276,7 @@ function Get-OpenAIUsage {
             temperature = $Temperature
             top_p       = $TopP
         }
+        if ($Stop -and $Stop.Count -gt 0) { $body.stop = $Stop }
         if ($MaxTokens -ne $null) { $body.max_tokens = $MaxTokens }
         if ($Seed -ne $null) { $body.seed = $Seed }
         $json = ($body | ConvertTo-Json -Depth 8)
@@ -307,6 +311,7 @@ function Invoke-OpenAIChatStream {
         [double]$Temperature = 0,
         [double]$TopP = 1,
         [int]$Seed,
+        [string[]]$Stop,
         [string]$ApiKey,
         [switch]$SkipCertificateCheck,
         [int]$TimeoutSec = 600,
@@ -330,6 +335,7 @@ function Invoke-OpenAIChatStream {
             top_p           = $TopP
             stream_options  = @{ include_usage = $true }
         }
+        if ($Stop -and $Stop.Count -gt 0) { $body.stop = $Stop }
         if ($MaxTokens -ne $null) { $body.max_tokens = $MaxTokens }
         if ($Seed -ne $null) { $body.seed = $Seed }
         $json = ($body | ConvertTo-Json -Depth 8)
@@ -386,7 +392,7 @@ function Invoke-OpenAIChatStream {
 
         if ($ForceTokenizer) {
             if (($completionText.Length -eq 0) -and $TokenizerModelId) {
-                $comp = Get-OpenAICompletionData -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec
+                $comp = Get-OpenAICompletionData -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -Stop $Stop -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec
                 if ($comp -and $comp.text) { [void]$completionText.Append($comp.text) }
             }
             if ($TokenizerModelId) {
@@ -394,19 +400,18 @@ function Invoke-OpenAIChatStream {
                 if ($fallback) {
                     $promptTokens = [int]$fallback.prompt_tokens
                     $completionTokens = [int]$fallback.completion_tokens
-                    if ($DebugTokenizer) { Write-Host ("[tokenizer] counts: prompt={0}, completion={1}" -f $promptTokens, $completionTokens) }
                 }
             }
         } elseif ($AttemptUsageFallback) {
             if ($null -eq $promptTokens -or $null -eq $completionTokens) {
-                $usage = Get-OpenAIUsage -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -DebugTokenizer:$DebugTokenizer
+                $usage = Get-OpenAIUsage -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -Stop $Stop -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -DebugTokenizer:$DebugTokenizer
                 if ($usage) {
                     if ($null -eq $promptTokens -and $null -ne $usage.prompt_tokens) { $promptTokens = [int]$usage.prompt_tokens }
                     if ($null -eq $completionTokens -and $null -ne $usage.completion_tokens) { $completionTokens = [int]$usage.completion_tokens }
                 }
             }
             if (($completionText.Length -eq 0) -and $TokenizerModelId) {
-                $comp = Get-OpenAICompletionData -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec
+                $comp = Get-OpenAICompletionData -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -Stop $Stop -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec
                 if ($comp -and $comp.text) { [void]$completionText.Append($comp.text) }
             }
             if (($null -eq $promptTokens -or $null -eq $completionTokens) -and $TokenizerModelId) {
@@ -414,7 +419,6 @@ function Invoke-OpenAIChatStream {
                 if ($fallback) {
                     if ($null -eq $promptTokens -and $null -ne $fallback.prompt_tokens) { $promptTokens = [int]$fallback.prompt_tokens }
                     if ($null -eq $completionTokens -and $null -ne $fallback.completion_tokens) { $completionTokens = [int]$fallback.completion_tokens }
-                    if ($DebugTokenizer) { Write-Host ("[tokenizer] counts: prompt={0}, completion={1}" -f $promptTokens, $completionTokens) }
                 }
             }
         }
@@ -436,10 +440,80 @@ function Invoke-OpenAIChatStream {
             prompt_tokens_per_s     = $promptTps
             gen_tokens_per_s        = $genTps
             completion_text_preview = $completionText.ToString().Substring(0, [Math]::Min($completionText.Length, 200))
+            completion_text         = $completionText.ToString()
         }
     } finally {
         $client.Dispose()
     }
 }
 
-Export-ModuleMember -Function Get-SystemInfo, New-OpenAIBaseUrl, Test-OpenAIEndpoint, Invoke-OpenAIChatStream, Get-OpenAIUsage, Get-OpenAICompletionData
+function Resolve-TokenizerModelId {
+    param(
+        [Parameter(Mandatory=$true)][string]$BaseUrl,
+        [Parameter(Mandatory=$true)][string]$SelectedModelId,
+        [string]$ApiKey,
+        [switch]$SkipCertificateCheck,
+        [string]$PythonPath = 'python',
+        [switch]$TokenizerLocalOnly,
+        [switch]$DebugTokenizer
+    )
+    $client = New-HttpClient -SkipCertificateCheck:$SkipCertificateCheck -ApiKey $ApiKey -TimeoutSec 30
+    try {
+        $uri = "$BaseUrl/models"
+        $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $uri)
+        $mt = New-Object System.Net.Http.Headers.MediaTypeWithQualityHeaderValue('application/json')
+        $req.Headers.Accept.Add($mt)
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $resp.IsSuccessStatusCode) { return $null }
+        $obj = $text | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if (-not $obj) { return $null }
+        $items = $null
+        if ($obj.data) { $items = $obj.data } else { $items = @() }
+        $rec = $items | Where-Object { $_.id -eq $SelectedModelId } | Select-Object -First 1
+        if (-not $rec) { $rec = $items | Where-Object { $_.id -like ($SelectedModelId + '*') } | Select-Object -First 1 }
+        if (-not $rec) { return $null }
+
+        $idStr = [string]$rec.id
+        if ($idStr -match '/') { return $idStr }
+
+        $owned = ''
+        if ($rec.owned_by) { $owned = ([string]$rec.owned_by).ToLowerInvariant() }
+        $lower = $idStr.ToLowerInvariant()
+        $candidates = New-Object System.Collections.Generic.List[string]
+        if ($lower -match 'qwen') {
+            $candidates.Add('Qwen/Qwen2.5-7B-Instruct')
+            $candidates.Add('Qwen/Qwen2-7B-Instruct')
+            $candidates.Add('Qwen/Qwen2.5-0.5B-Instruct')
+        } elseif ($lower -match 'phi') {
+            $candidates.Add('microsoft/phi-3-mini-4k-instruct')
+            $candidates.Add('microsoft/phi-2')
+        } elseif ($lower -match 'llama') {
+            $candidates.Add('meta-llama/Meta-Llama-3.1-8B-Instruct')
+            $candidates.Add('meta-llama/Meta-Llama-3-8B-Instruct')
+        } elseif ($lower -match 'mistral') {
+            $candidates.Add('mistralai/Mistral-7B-Instruct-v0.3')
+            $candidates.Add('mistralai/Mistral-7B-Instruct-v0.2')
+        } elseif ($lower -match 'neo|gpt-j|gptj|gpt-neo') {
+            $candidates.Add('EleutherAI/gpt-neox-20b')
+        } elseif ($lower -match 'gemma') {
+            $candidates.Add('google/gemma-7b-it')
+        }
+        # Hint by owner
+        if ($owned -eq 'microsoft' -and $candidates.Count -eq 0) { $candidates.Add('microsoft/phi-3-mini-4k-instruct') }
+        if ($owned -eq 'meta' -and $candidates.Count -eq 0) { $candidates.Add('meta-llama/Meta-Llama-3.1-8B-Instruct') }
+        if ($owned -eq 'qwen' -and $candidates.Count -eq 0) { $candidates.Add('Qwen/Qwen2.5-7B-Instruct') }
+
+        foreach ($cand in $candidates) {
+            $probe = Invoke-HFTokenCount -ModelId $cand -Messages @() -PythonPath $PythonPath -LocalFilesOnly:$TokenizerLocalOnly -DebugTokenizer:$DebugTokenizer
+            if ($probe) { return $cand }
+        }
+        return $null
+    } catch {
+        return $null
+    } finally {
+        $client.Dispose()
+    }
+}
+
+Export-ModuleMember -Function Get-SystemInfo, New-OpenAIBaseUrl, Test-OpenAIEndpoint, Invoke-OpenAIChatStream, Get-OpenAIUsage, Get-OpenAICompletionData, Resolve-TokenizerModelId
