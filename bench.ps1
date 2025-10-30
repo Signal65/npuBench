@@ -18,6 +18,7 @@ param(
     [string]$PythonPath = 'python',
     [switch]$TokenizerLocalOnly,
     [switch]$DebugTokenizer,
+    [switch]$DebugUsage,
     [switch]$IncludeOptional,
     [switch]$ExcludeWarmupFromCsv
 )
@@ -95,6 +96,22 @@ if (-not (Test-OpenAIEndpoint -BaseUrl $ResolvedBaseUrl -ApiKey $ApiKey -SkipCer
     exit 1
 }
 
+# Preflight: validate model id against /v1/models and warn/suggest
+$availableModels = Get-OpenAIModels -BaseUrl $ResolvedBaseUrl -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck
+if ($availableModels -and -not ($availableModels -contains $Model)) {
+    # Case-insensitive exact match: normalize to server id
+    $ciMatches = $availableModels | Where-Object { $_.ToLowerInvariant() -eq $Model.ToLowerInvariant() }
+    $ciArr = @($ciMatches)
+    if ($ciArr.Count -gt 0) {
+        $exact = $ciArr | Select-Object -First 1
+        Write-Host ("Info: normalizing model id to '{0}' (case-insensitive match)" -f $exact)
+        $Model = $exact
+    } else {
+        Write-Error ("Model '{0}' not found in /v1/models. Aborting." -f $Model)
+        exit 1
+    }
+}
+
 $forceTokenizer = $false
 if ($BackendName -and $BackendName.ToLowerInvariant() -eq 'foundry') {
     $forceTokenizer = $true
@@ -153,9 +170,38 @@ foreach ($p in $BenchPrompts) {
         $effMax = $MaxOutputTokens
         if ($p.max_output_tokens -ne $null) { $effMax = [int]$p.max_output_tokens }
 
-        $metrics = Invoke-OpenAIChatStream -BaseUrl $ResolvedBaseUrl -Model $Model -Messages $messages -MaxTokens $effMax -Temperature $Temperature -TopP $TopP -Seed $Seed -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -AttemptUsageFallback -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -ForceTokenizer:$forceTokenizer -DebugTokenizer:$DebugTokenizer
+        $metrics = Invoke-OpenAIChatStream -BaseUrl $ResolvedBaseUrl -Model $Model -Messages $messages -MaxTokens $effMax -Temperature $Temperature -TopP $TopP -Seed $Seed -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -AttemptUsageFallback -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -ForceTokenizer:$forceTokenizer -DebugTokenizer:$DebugTokenizer -DebugUsage:$DebugUsage
 
         $tokenSource = if ($metrics.prompt_tokens -ne $null -and $metrics.completion_tokens -ne $null) { if ($TokenizerModelId) { 'usage_or_hf' } else { 'usage' } } else { if ($TokenizerModelId) { if ($forceTokenizer) { 'hf_failed_forced' } else { 'hf_failed' } } else { 'none' } }
+
+        # Output quality flags
+        $flags = New-Object System.Collections.Generic.List[string]
+        $outText = $metrics.completion_text
+        if (-not $outText -or [string]::IsNullOrWhiteSpace($outText)) { $flags.Add('empty_output') | Out-Null }
+        else {
+            if ($outText -match '^(?s)\s+$') { $flags.Add('whitespace_only') | Out-Null }
+            if ($outText -match '(?i)exception|traceback|error|invalid|nan|failed|abort') { $flags.Add('error_text') | Out-Null }
+            $words = @()
+            try { $words = ($outText -split '\s+') | Where-Object { $_ -ne '' } } catch { $words = @() }
+            $wcount = 0
+            if ($words) { $wcount = @($words).Count }
+            if ($wcount -ge 10) {
+                $topCnt = (@($words | Group-Object | Sort-Object Count -Descending | Select-Object -First 1).Count)
+                if ($topCnt -gt 0) {
+                    $ratio = [double]$topCnt / [double]$wcount
+                    if ($ratio -ge 0.9) { $flags.Add('repeated_word') | Out-Null }
+                }
+            }
+            if ($effMax -ne $null -and [int]$effMax -ge 64) {
+                $ct = $metrics.completion_tokens
+                if (($ct -eq $null -and $outText.Length -le 5) -or ($ct -ne $null -and [int]$ct -le 1)) { $flags.Add('too_short_vs_max') | Out-Null }
+            }
+        }
+        if ($metrics.gen_tokens_per_s -eq $null -or $metrics.gen_tokens_per_s -le 0) { $flags.Add('missing_gen_tps') | Out-Null }
+        if ($metrics.prompt_tokens -eq $null -and $metrics.completion_tokens -eq $null -and ([string]::IsNullOrWhiteSpace($outText))) { $flags.Add('no_usage_no_output') | Out-Null }
+
+        $outputOk = ($flags.Count -eq 0)
+        $outputFlags = ($flags -join ',')
 
         $row = [pscustomobject]@{
             timestamp              = (Get-Date).ToString('o')
@@ -185,10 +231,14 @@ foreach ($p in $BenchPrompts) {
             runs_per_prompt        = $RunsPerPrompt
             max_output_tokens      = $effMax
             completion_text        = $metrics.completion_text
+            output_ok              = $outputOk
+            output_flags           = $outputFlags
         }
         $rows.Add($row) | Out-Null
 
-        Write-Host ("[{0}/{1}] {2} (run {3}/{4}{5}) -> TTFT {6} ms, gen_tps {7}" -f $runIndex, $totalRuns, $p.id, $i, $RunsPerPrompt, ($(if($i -eq 1){' warmup'}else{''})), $metrics.ttft_ms, $metrics.gen_tokens_per_s)
+        $flagNote = ''
+        if (-not $outputOk -and $outputFlags) { $flagNote = " flags: $outputFlags" }
+        Write-Host ("[{0}/{1}] {2} (run {3}/{4}{5}) -> TTFT {6} ms, gen_tps {7}{8}" -f $runIndex, $totalRuns, $p.id, $i, $RunsPerPrompt, ($(if($i -eq 1){' warmup'}else{''})), $metrics.ttft_ms, $metrics.gen_tokens_per_s, $flagNote)
 
         # Pause between runs of the same prompt (skip after last run)
         if ($i -lt $RunsPerPrompt) { Start-Sleep -Seconds 5 }

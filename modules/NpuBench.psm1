@@ -175,6 +175,33 @@ function Test-OpenAIEndpoint {
     }
 }
 
+function Get-OpenAIModels {
+    param(
+        [string]$BaseUrl,
+        [string]$ApiKey,
+        [switch]$SkipCertificateCheck,
+        [int]$TimeoutSec = 60
+    )
+    $client = New-HttpClient -SkipCertificateCheck:$SkipCertificateCheck -ApiKey $ApiKey -TimeoutSec $TimeoutSec
+    try {
+        $uri = "$BaseUrl/models"
+        $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $uri)
+        $mt = New-Object System.Net.Http.Headers.MediaTypeWithQualityHeaderValue('application/json')
+        $req.Headers.Accept.Add($mt)
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $resp.IsSuccessStatusCode) { return @() }
+        $obj = $text | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if (-not $obj) { return @() }
+        if ($obj.data) { return @($obj.data | ForEach-Object { [string]$_.id }) }
+        return @()
+    } catch {
+        return @()
+    } finally {
+        $client.Dispose()
+    }
+}
+
 function Get-OpenAICompletionData {
     param(
         [string]$BaseUrl,
@@ -249,7 +276,8 @@ function Get-OpenAIUsage {
         [string]$TokenizerModelId,
         [string]$PythonPath = 'python',
         [switch]$TokenizerLocalOnly,
-        [switch]$DebugTokenizer
+        [switch]$DebugTokenizer,
+        [switch]$DebugUsage
     )
     Ensure-NpuBenchNetSupport
     $handler = New-Object System.Net.Http.HttpClientHandler
@@ -288,8 +316,15 @@ function Get-OpenAIUsage {
         $resp = $client.SendAsync($req).GetAwaiter().GetResult()
         $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         if (-not $resp.IsSuccessStatusCode) { throw 'non-success' }
+        if ($DebugUsage) {
+            $preview = if ($text) { $text.Substring(0, [Math]::Min($text.Length, 2000)) } else { '' }
+            Write-Host ("[usage] non-stream raw (trunc): {0}" -f $preview)
+        }
         $obj = $text | ConvertFrom-Json -ErrorAction SilentlyContinue
-        if ($obj -and $obj.usage) { return $obj.usage }
+        if ($obj -and $obj.usage) {
+            if ($DebugUsage) { Write-Host ("[usage] non-stream parsed: {0}" -f (($obj.usage | ConvertTo-Json -Depth 8))) }
+            return $obj.usage
+        }
         throw 'no-usage'
     } catch {
         if (-not [string]::IsNullOrWhiteSpace($TokenizerModelId)) {
@@ -320,7 +355,8 @@ function Invoke-OpenAIChatStream {
         [string]$PythonPath = 'python',
         [switch]$TokenizerLocalOnly,
         [switch]$ForceTokenizer,
-        [switch]$DebugTokenizer
+        [switch]$DebugTokenizer,
+        [switch]$DebugUsage
     )
 
     $client = New-HttpClient -SkipCertificateCheck:$SkipCertificateCheck -ApiKey $ApiKey -TimeoutSec $TimeoutSec
@@ -352,6 +388,8 @@ function Invoke-OpenAIChatStream {
         $completionText = New-Object System.Text.StringBuilder
         $promptTokens = $null
         $completionTokens = $null
+        $lastUsageEvent = $null
+        $polledUsage = $null
 
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
@@ -367,9 +405,11 @@ function Invoke-OpenAIChatStream {
                 if ($null -ne $obj.usage.completion_tokens) { $completionTokens = [int]$obj.usage.completion_tokens }
                 if ($null -eq $completionTokens -and $null -ne $obj.usage.output_tokens) { $completionTokens = [int]$obj.usage.output_tokens }
                 if ($null -eq $promptTokens -and $null -ne $obj.usage.input_tokens) { $promptTokens = [int]$obj.usage.input_tokens }
+                $lastUsageEvent = $obj.usage
             } elseif ($null -ne $obj.event -and ($obj.event -like '*usage*') -and $null -ne $obj.data) {
                 if ($null -eq $promptTokens -and $null -ne $obj.data.input_tokens) { $promptTokens = [int]$obj.data.input_tokens }
                 if ($null -eq $completionTokens -and $null -ne $obj.data.output_tokens) { $completionTokens = [int]$obj.data.output_tokens }
+                $lastUsageEvent = $obj.data
             }
 
             if ($obj.choices) {
@@ -404,8 +444,9 @@ function Invoke-OpenAIChatStream {
             }
         } elseif ($AttemptUsageFallback) {
             if ($null -eq $promptTokens -or $null -eq $completionTokens) {
-                $usage = Get-OpenAIUsage -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -Stop $Stop -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -DebugTokenizer:$DebugTokenizer
+                $usage = Get-OpenAIUsage -BaseUrl $BaseUrl -Model $Model -Messages $Messages -MaxTokens $MaxTokens -Temperature $Temperature -TopP $TopP -Seed $Seed -Stop $Stop -ApiKey $ApiKey -SkipCertificateCheck:$SkipCertificateCheck -TimeoutSec $TimeoutSec -TokenizerModelId $TokenizerModelId -PythonPath $PythonPath -TokenizerLocalOnly:$TokenizerLocalOnly -DebugTokenizer:$DebugTokenizer -DebugUsage:$DebugUsage
                 if ($usage) {
+                    $polledUsage = $usage
                     if ($null -eq $promptTokens -and $null -ne $usage.prompt_tokens) { $promptTokens = [int]$usage.prompt_tokens }
                     if ($null -eq $completionTokens -and $null -ne $usage.completion_tokens) { $completionTokens = [int]$usage.completion_tokens }
                 }
@@ -431,6 +472,12 @@ function Invoke-OpenAIChatStream {
         $genTps = $null
         if ($promptTokens -ne $null) { $promptTps = [Math]::Round($promptTokens / $prefillSec, 3) }
         if ($completionTokens -ne $null) { $genTps = $null; if ($genSec -gt 0) { $genTps = [Math]::Round($completionTokens / $genSec, 3) } }
+
+        if ($DebugUsage -or ($genTps -eq $null)) {
+            Write-Host ("[usage] ttft_ms={0}, total_ms={1}, prompt_tokens={2}, completion_tokens={3}, gen_sec={4}" -f $ttfbMs, $totalMs, ($promptTokens -as [string]), ($completionTokens -as [string]), ([Math]::Round($genSec,3)))
+            if ($lastUsageEvent) { Write-Host ("[usage] last stream usage: {0}" -f (($lastUsageEvent | ConvertTo-Json -Depth 8))) } else { Write-Host "[usage] last stream usage: <none>" }
+            if ($polledUsage) { Write-Host ("[usage] non-stream usage: {0}" -f (($polledUsage | ConvertTo-Json -Depth 8))) } else { Write-Host "[usage] non-stream usage: <none>" }
+        }
 
         [pscustomobject]@{
             ttft_ms                 = $ttfbMs
@@ -516,4 +563,4 @@ function Resolve-TokenizerModelId {
     }
 }
 
-Export-ModuleMember -Function Get-SystemInfo, New-OpenAIBaseUrl, Test-OpenAIEndpoint, Invoke-OpenAIChatStream, Get-OpenAIUsage, Get-OpenAICompletionData, Resolve-TokenizerModelId
+Export-ModuleMember -Function Get-SystemInfo, New-OpenAIBaseUrl, Test-OpenAIEndpoint, Get-OpenAIModels, Invoke-OpenAIChatStream, Get-OpenAIUsage, Get-OpenAICompletionData, Resolve-TokenizerModelId
