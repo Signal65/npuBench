@@ -1,0 +1,32 @@
+prompts_file: prompts.json
+runs_dir: runs
+pause_between_jobs_sec: 30
+retry: 1
+resume: true
+runs_per_prompt: 2
+
+bench_flags:
+  exclude_warmup_from_csv: false
+  debug_usage: false
+  debug_network: false
+
+matrix:
+  - name: nexa_main
+    backend_name: Nexa
+    base_url: http://10.10.1.64:18181/v1/
+    tokenizer_model_id: null
+    models:
+      - [NexaAI/Llama3.2-3B-NPU-Turbo, NexaAI/OmniNeural-4B]
+    env:
+
+judge:
+  enabled: true
+  base_url: http://10.10.1.221:11434/v1/
+  model: gpt-oss:20b
+  timeout: 120
+  rate_limit: 0
+  json_mode: true
+  max_tokens: 2048
+
+
+

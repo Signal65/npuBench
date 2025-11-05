@@ -158,9 +158,26 @@ def call_chat(base_url: str, api_key: str | None, model: str, messages: list, ma
         with request.urlopen(req, timeout=timeout) as resp:
             text = resp.read().decode('utf-8', errors='replace')
             obj = json.loads(text)
-            choice = (obj.get('choices') or [{}])[0]
+            # Robust extraction across providers
+            choices = obj.get('choices') or []
+            if not choices:
+                return ''
+            choice = choices[0]
             msg = choice.get('message') or {}
-            return msg.get('content') or ''
+            content = msg.get('content')
+            # Some providers return list of parts for content
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'text':
+                        parts.append(part.get('text', ''))
+                    elif isinstance(part, str):
+                        parts.append(part)
+                content = '\n'.join([p for p in parts if p])
+            if not content:
+                # Legacy field
+                content = choice.get('text') or ''
+            return content or ''
     except error.HTTPError as e:
         txt = e.read().decode('utf-8', errors='replace')
         # Some servers require max_tokens. If omitted (max_tokens is None) and server complains, retry once with 2048.
@@ -212,7 +229,7 @@ def main():
     ap.add_argument('--model', required=True, help='Judge model id')
     ap.add_argument('--api-key', default=None)
     ap.add_argument('--out', default=None, help='Output CSV (default: alongside input with _eval suffix)')
-    ap.add_argument('--max-tokens', type=int, default=8192)
+    ap.add_argument('--max-tokens', type=int, default=2048)
     ap.add_argument('--temperature', type=float, default=0.0)
     ap.add_argument('--top-p', type=float, default=1.0)
     ap.add_argument('--rate-limit', type=float, default=0.0, help='Seconds to sleep between judge calls')
@@ -238,11 +255,18 @@ def main():
         for row in reader:
             in_rows.append(row)
 
+    # Detect candidate text column from common options
+    candidate_candidates = ['completion_text', 'output', 'text', 'response', 'answer']
+    header_keys = list(in_rows[0].keys()) if in_rows else []
+    candidate_col = next((c for c in candidate_candidates if c in header_keys), 'completion_text')
+    if args.verbose:
+        print(f"Using candidate column: {candidate_col}")
+
     # Detect groups where all runs have identical non-empty outputs; we'll evaluate only the first and skip the rest
     prompt_to_norm_outputs = {}
     for row in in_rows:
         pid0 = row.get('prompt_id')
-        norm_out = normalize_for_dup(row.get('completion_text') or '')
+        norm_out = normalize_for_dup(row.get(candidate_col) or '')
         if pid0 not in prompt_to_norm_outputs:
             prompt_to_norm_outputs[pid0] = set()
         prompt_to_norm_outputs[pid0].add(norm_out)
@@ -273,7 +297,7 @@ def main():
         print(f"CSV rows:       {total} from {args.csv}")
     for idx, row in enumerate(in_rows, start=1):
         pid = row.get('prompt_id')
-        cand = row.get('completion_text') or ''
+        cand = row.get(candidate_col) or ''
         meta = pmap.get(pid) or {}
         reference = meta.get('reference') if isinstance(meta, dict) else None
 
@@ -350,6 +374,25 @@ def main():
                     )
                     raw_judge_text = content or ''
                     obj = extract_json(content) or {}
+                    # Fallback: if empty or unparsable, retry once without JSON mode
+                    if (not obj) or (obj.get('score') is None and obj.get('verdict') is None):
+                        if args.verbose:
+                            prev = (raw_judge_text[:160] + '...') if len(raw_judge_text) > 160 else raw_judge_text
+                            print(f"retry_no_json row={idx} pid={pid} preview={prev!r}")
+                        content2 = call_chat(
+                            base_url=args.base_url,
+                            api_key=args.api_key,
+                            model=args.model,
+                            messages=messages,
+                            max_tokens=args.max_tokens,
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            timeout=args.timeout,
+                            response_format_json=False,
+                        )
+                        if content2:
+                            raw_judge_text = content2
+                            obj = extract_json(content2) or {}
                     score = obj.get('score')
                     verdict = obj.get('verdict')
                     rationale = obj.get('rationale')
@@ -397,6 +440,9 @@ def main():
             'eval_rationale': rationale,
             'eval_model': args.model,
         })
+        # Ensure completion_text exists for downstream consumers/web UI
+        if 'completion_text' not in new_row:
+            new_row['completion_text'] = cand
         if args.raw_column:
             new_row['eval_raw_judge'] = raw_judge_text
         out_rows.append(new_row)
