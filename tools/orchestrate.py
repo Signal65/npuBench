@@ -155,7 +155,8 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
     pause_between_jobs_sec = int(plan.get("pause_between_jobs_sec", 30))
     retry = int(plan.get("retry", 0))
     resume = bool(plan.get("resume", True))
-    runs_dir = os.path.abspath(plan.get("runs_dir", os.path.join(repo_root, "runs")))
+    # Always use results directory for all artifacts (logs, evals, index)
+    results_root = os.path.abspath(plan.get("results_dir", os.path.join(repo_root, "results")))
     max_payload_chars = plan.get("judge", {}).get("max_payload_chars")
 
     bench_flags = plan.get("bench_flags", {})
@@ -186,7 +187,7 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
         print("No matrix jobs in plan.")
         return 1
 
-    ensure_dir(runs_dir)
+    ensure_dir(results_root)
     index_rows: List[Dict[str, Any]] = []
 
     for job_idx, job in enumerate(matrix):
@@ -223,7 +224,7 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
             for rep in range(1, repeat + 1):
                 ts = now_ts()
                 dir_name = f"{ts}_{make_safe_segment(job_name)}_{make_safe_segment(model)}"
-                out_dir = os.path.join(runs_dir, dir_name)
+                out_dir = os.path.join(results_root, dir_name)
                 ensure_dir(out_dir)
 
                 meta = {
@@ -237,12 +238,9 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                 }
                 write_json(os.path.join(out_dir, "metadata.json"), meta)
 
-                # Write bench CSVs into global results/ with timestamped names to avoid overwrite
-                results_dir = os.path.join(runs_dir, os.pardir, "results")
-                results_dir = os.path.abspath(results_dir)
-                ensure_dir(results_dir)
+                # Write bench CSVs into results/ with timestamped names to avoid overwrite
                 bench_csv = os.path.join(
-                    results_dir,
+                    results_root,
                     f"bench_{ts}_{make_safe_segment(job_name)}_{make_safe_segment(model)}.csv",
                 )
                 bench_log = os.path.join(out_dir, "bench.log")
@@ -369,8 +367,8 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                     if not is_last:
                         time.sleep(pause_between_jobs_sec)
 
-    write_index(index_rows, runs_dir)
-    print(f"Done. Wrote index under {runs_dir}")
+    write_index(index_rows, results_root)
+    print(f"Done. Wrote index under {results_root}")
     return 0
 
 

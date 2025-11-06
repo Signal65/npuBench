@@ -13,10 +13,10 @@ bench_flags:
 matrix:
   - name: nexa_main
     backend_name: Nexa
-    base_url: http://10.10.1.64:18181/v1/
+    base_url: http://10.10.1.221:11434/v1/
     tokenizer_model_id: null
     models:
-      - [NexaAI/Llama3.2-3B-NPU-Turbo, NexaAI/OmniNeural-4B]
+      - [gemma3:270m]
     env:
 
 judge:

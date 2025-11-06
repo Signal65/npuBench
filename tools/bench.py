@@ -32,7 +32,7 @@ import sys
 import time
 from dataclasses import dataclass
 import platform
-import socket
+import subprocess
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import re
 
@@ -291,7 +291,7 @@ def main() -> int:
     ap.add_argument("--max-output-tokens", type=int)
     ap.add_argument("--runs-per-prompt", type=int, default=4, help="Number of runs to execute per prompt")
     ap.add_argument("--pause-between-runs-sec", type=int, default=5)
-    ap.add_argument("--pause-between-prompts-sec", type=int, default=60)
+    ap.add_argument("--pause-between-prompts-sec", type=int, default=1)
     ap.add_argument("--timeout-sec", type=int, default=120)
     ap.add_argument("--exclude-warmup-from-csv", action="store_true")
     ap.add_argument("--debug-usage", action="store_true")
@@ -344,8 +344,54 @@ def main() -> int:
     # System metadata captured once per run
     from datetime import datetime as _dt
     bench_timestamp = _dt.now().isoformat(timespec='seconds')
-    hostname = socket.gethostname()
-    os_version = platform.platform()
+    # Minimal system info; avoid collecting host-identifying fields
+    # Prefer WMI/CIM queries on Windows
+    def _ps_last_line(expr: str) -> str:
+        try:
+            out = subprocess.check_output(
+                ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', expr],
+                stderr=subprocess.STDOUT, text=True, timeout=5
+            )
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            return lines[-1] if lines else ''
+        except Exception:
+            return ''
+
+    def _get_cpu_name() -> str:
+        if os.name == 'nt':
+            name = _ps_last_line('(Get-CimInstance Win32_Processor).Name')
+            if not name:
+                name = _ps_last_line('(Get-WmiObject Win32_Processor).Name')
+            if name:
+                return name
+        name = platform.processor() or os.environ.get('PROCESSOR_IDENTIFIER', '')
+        return name or (platform.machine() or '')
+
+    def _get_system_model() -> str:
+        if os.name == 'nt':
+            model = _ps_last_line('(Get-WmiObject -Class Win32_ComputerSystem).Model')
+            if not model:
+                model = _ps_last_line('(Get-CimInstance Win32_ComputerSystem).Model')
+            if model:
+                return model
+        try:
+            uname = platform.uname()
+            return f"{uname.system} {uname.release} {uname.machine}".strip()
+        except Exception:
+            return platform.machine() or ''
+
+    processor_name = _get_cpu_name()
+    system_model = _get_system_model()
+    def _get_windows_build() -> str:
+        if os.name == 'nt':
+            build = _ps_last_line('(Get-CimInstance Win32_OperatingSystem).BuildNumber') or _ps_last_line('(Get-WmiObject -Class Win32_OperatingSystem).BuildNumber')
+            ubr = _ps_last_line("(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' -Name UBR).UBR")
+            if build and ubr:
+                return f"{build}.{ubr}"
+            if build:
+                return build
+        return ''
+    os_build = _get_windows_build()
     run_index = 0
     total_runs = 0
     # compute total runs for progress
@@ -405,8 +451,9 @@ def main() -> int:
                 print(f"[run {run_index}/{total_runs}] {pid} request_error: {type(exc).__name__}: {exc}")
                 row = {
                     "timestamp": bench_timestamp,
-                    "hostname": hostname,
-                    "os_version": os_version,
+                    "system_model": system_model,
+                    "processor_name": processor_name,
+                    "os_build": os_build,
                     "base_url": args.base_url,
                     "prompt_id": pid,
                     "run_index": run_index,
@@ -456,8 +503,9 @@ def main() -> int:
 
             row = {
                 "timestamp": bench_timestamp,
-                "hostname": hostname,
-                "os_version": os_version,
+                "system_model": system_model,
+                "processor_name": processor_name,
+                "os_build": os_build,
                 "base_url": args.base_url,
                 "prompt_id": pid,
                 "run_index": run_index,
@@ -522,8 +570,9 @@ def main() -> int:
 
     fieldnames = [
         "timestamp",
-        "hostname",
-        "os_version",
+        "system_model",
+        "processor_name",
+        "os_build",
         "base_url",
         "prompt_id",
         "run_index",
