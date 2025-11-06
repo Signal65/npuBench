@@ -319,6 +319,7 @@ def main():
                     'eval_hallucination': '',
                     'eval_rationale': '',
                     'eval_model': args.model,
+                    'is_duplicate': True,
                 })
                 if args.raw_column:
                     new_row['eval_raw_judge'] = ''
@@ -439,10 +440,8 @@ def main():
             'eval_hallucination': hallucination,
             'eval_rationale': rationale,
             'eval_model': args.model,
+            'is_duplicate': False,
         })
-        # Ensure completion_text exists for downstream consumers/web UI
-        if 'completion_text' not in new_row:
-            new_row['completion_text'] = cand
         if args.raw_column:
             new_row['eval_raw_judge'] = raw_judge_text
         out_rows.append(new_row)

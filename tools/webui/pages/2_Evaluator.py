@@ -330,7 +330,8 @@ def main():
                 c1, c2 = st.columns(2)
                 with c1:
                     st.caption('Candidate (completion_text)')
-                    st.text_area('cmp_candidate', value=row_u.get('completion_text') or '', height=360, label_visibility='collapsed')
+                    cand_text = row_u.get('completion_text') or row_u.get('output') or ''
+                    st.text_area('cmp_candidate', value=cand_text, height=360, label_visibility='collapsed')
                 with c2:
                     st.caption('Reference (from prompts.json)')
                     st.text_area('cmp_reference', value=reference_text, height=240, label_visibility='collapsed')

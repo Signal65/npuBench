@@ -155,7 +155,7 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
     pause_between_jobs_sec = int(plan.get("pause_between_jobs_sec", 30))
     retry = int(plan.get("retry", 0))
     resume = bool(plan.get("resume", True))
-    # Always use results directory for all artifacts (logs, evals, index)
+    # Always use results directory for all artifacts (evals, index). One folder per entry.
     results_root = os.path.abspath(plan.get("results_dir", os.path.join(repo_root, "results")))
     max_payload_chars = plan.get("judge", {}).get("max_payload_chars")
 
@@ -223,8 +223,9 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
         for model_idx, model in enumerate(models):
             for rep in range(1, repeat + 1):
                 ts = now_ts()
-                dir_name = f"{ts}_{make_safe_segment(job_name)}_{make_safe_segment(model)}"
-                out_dir = os.path.join(results_root, dir_name)
+                # Entry folder: results/<timestamp>_<job>_<model>/
+                entry_name = f"{ts}_{make_safe_segment(job_name)}_{make_safe_segment(model)}"
+                out_dir = os.path.join(results_root, entry_name)
                 ensure_dir(out_dir)
 
                 meta = {
@@ -238,13 +239,9 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                 }
                 write_json(os.path.join(out_dir, "metadata.json"), meta)
 
-                # Write bench CSVs into results/ with timestamped names to avoid overwrite
-                bench_csv = os.path.join(
-                    results_root,
-                    f"bench_{ts}_{make_safe_segment(job_name)}_{make_safe_segment(model)}.csv",
-                )
-                bench_log = os.path.join(out_dir, "bench.log")
-                eval_csv = os.path.join(out_dir, "eval.csv")
+                # Write bench CSV to a temp file; final artifact is only eval CSV
+                bench_csv = os.path.join(results_root, f".tmp_bench_{entry_name}.csv")
+                eval_csv = os.path.join(out_dir, f"{entry_name}_eval.csv")
 
                 print(f"[job] {job_name} | model={model}")
 
@@ -335,7 +332,7 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                 while attempts_left > 0:
                     attempts_left -= 1
                     print(f"[bench] start (attempt {1 + max(0, retry) - attempts_left}/{1 + max(0, retry)})")
-                    bench_rc = run_process(bench_cmd, log_path=bench_log, env=job_env)
+                    bench_rc = run_process(bench_cmd, log_path=None, env=job_env)
                     if bench_rc == 0 and os.path.isfile(bench_csv):
                         print("[bench] ok")
                         break
@@ -348,7 +345,7 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                 if status == "bench_ok":
                     if eval_enabled:
                         print("[eval] start")
-                        eval_rc = run_process(eval_cmd, log_path=os.path.join(out_dir, "eval.log"), env=job_env)
+                        eval_rc = run_process(eval_cmd, log_path=None, env=job_env)
                         print("[eval] ok" if (eval_rc == 0 and os.path.isfile(eval_csv)) else f"[eval] failed rc={eval_rc}")
                         status = "ok" if (eval_rc == 0 and os.path.isfile(eval_csv)) else "eval_failed"
                     else:
@@ -360,6 +357,13 @@ def orchestrate(plan: Dict[str, Any], repo_root: str) -> int:
                     "status": status,
                     "dir": out_dir,
                 })
+
+                # Cleanup temporary bench CSV if present
+                try:
+                    if os.path.isfile(bench_csv):
+                        os.remove(bench_csv)
+                except Exception:
+                    pass
 
                 # Cooldown between jobs
                 if pause_between_jobs_sec > 0:
