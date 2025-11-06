@@ -52,14 +52,30 @@ def main():
             st.write('📊 Dashboard')
     st.title('Dashboard: Compare systems/models/backends')
 
+    # Folder-based bulk selection
+    st.subheader('Select results')
+    fc1, fc2, fc3 = st.columns([4, 1, 1])
+    with fc1:
+        folder_path = st.text_input('Results folder', value=RESULTS_DIR)
+    with fc2:
+        recurse = st.checkbox('Recurse', value=True)
+    with fc3:
+        load_folder = st.button('Load folder')
+
+    # Manual selection remains available
     d_cols = st.columns([3, 1])
     with d_cols[0]:
         eval_candidates = find_eval_csv_candidates()
-        picked = st.multiselect('Evaluated CSVs', options=eval_candidates, default=eval_candidates[:2])
+        picked = st.multiselect('Or pick specific evaluated CSVs', options=eval_candidates, default=[])
     with d_cols[1]:
-        add_files = st.file_uploader('Add evaluated CSVs', type=['csv'], accept_multiple_files=True)
+        add_files = st.file_uploader('Or add files…', type=['csv'], accept_multiple_files=True)
 
-    all_paths = list(picked)
+    all_paths = []
+    if load_folder and folder_path:
+        pattern = os.path.join(folder_path, '**', '*_eval.csv') if recurse else os.path.join(folder_path, '*_eval.csv')
+        all_paths = sorted(glob.glob(pattern, recursive=recurse))
+    if picked:
+        all_paths.extend(list(picked))
     if add_files:
         os.makedirs(RESULTS_DIR, exist_ok=True)
         for fobj in add_files:

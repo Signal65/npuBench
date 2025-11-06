@@ -8,21 +8,41 @@ A lightweight PowerShell framework to benchmark OpenAI-compatible LLM backends (
 - Outputs a single CSV per run with metrics and context
 
 ### Requirements
-- Windows PowerShell 5.1 or PowerShell 7+
+- Windows PowerShell 5.1 or PowerShell 7+ (for the original script)
+- Python 3.10+ (for the Python bench/orchestrator/web UI)
 - Network access to an OpenAI-compatible server
 
-### Installation
-Clone or copy this folder. No external dependencies required.
+### Python packages (test system)
+Install these with pip (recommend a virtual environment):
 
-Optional (for local tokenizer fallback when the server does not return usage):
-- Python 3.8+
-- Install packages:
+Core (bench/orchestrator/evaluator):
 ```
-python -m pip install transformers tokenizers jinja2
+python -m pip install requests pyyaml pandas
 ```
+
+Web UI (Streamlit dashboard and evaluator UI):
+```
+python -m pip install streamlit pandas plotly pyarrow
+```
+
+Optional components:
+- Tokenizer fallback for gen_tps when servers omit usage:
+```
+python -m pip install transformers tokenizers
+```
+- Parquet reference extractor (OpenOrca):
+```
+python -m pip install pandas pyarrow fastparquet
+```
+
+You can also install the web UI dependencies via:
+```
+python -m pip install -r tools/webui/requirements.txt
+```
+
 Notes:
 - PyTorch/TF/Flax are NOT required for token counting; tokenizers work without them.
-- If running offline, cache tokenizers first or use `-TokenizerLocalOnly` after caching.
+- If running offline, cache tokenizers first or use `--force-tokenizer` after caching.
 
 ### Usage
 Run from this directory:
@@ -38,6 +58,23 @@ Run from this directory:
 ./bench.ps1 -ServerHost <ip> -Port <port> -Model <modelName> -BackendName <name> -RunsPerPrompt 4 -MaxOutputTokens <int?> -Temperature 0 -TopP 1 -Seed 0 -OutputDir ./results -TokenizerModelId <hf_tokenizer_id?> -PythonPath python -TokenizerLocalOnly -DebugTokenizer
 ```
 
+Python bench (no PowerShell required):
+```
+python tools/bench.py --base-url http://192.168.1.50:8000/v1 \
+  --model llama-3.1-8b-instruct --backend-name Nexa \
+  --prompts-file prompts.json --out-csv results.csv --runs-per-prompt 4
+```
+
+Python orchestrator (matrix of models/backends):
+```
+python tools/orchestrate.py --plan tools/plan.yaml
+```
+
+Web UI (evaluator and comparison dashboard):
+```
+streamlit run tools/webui/app.py
+```
+
 Notes:
 - If your server uses HTTPS with a self-signed certificate, add `-SkipCertificateCheck`.
 - The script attempts to obtain token usage from the server. If usage is not sent in stream, it falls back to either a non-stream request for usage, or (optionally) local tokenization via Hugging Face.
@@ -51,8 +88,8 @@ CSV written to `results/` with columns including:
 - temperature, top_p, seed, runs_per_prompt, max_output_tokens
 
 ### Extending
-- Add or modify baked prompts in `bench.ps1` under `$BenchPrompts`.
-- The core HTTP and metrics logic is in `modules/NpuBench.psm1`.
+- PowerShell path: baked prompts under `$BenchPrompts` in `bench.ps1`; HTTP logic in `modules/NpuBench.psm1`.
+- Python path: prompts loaded from `prompts.json`; evaluator at `tools/evaluate.py`; web UI under `tools/webui/`.
 
 ### Disclaimer
 Token counts require backend-provided usage. If unavailable, counts can be computed with a local tokenizer (HF AutoTokenizer). Provide `-TokenizerModelId` or rely on auto-detection; for offline-only, use `-TokenizerLocalOnly` after caching the tokenizer locally.

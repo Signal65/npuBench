@@ -31,6 +31,8 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+import platform
+import socket
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import re
 
@@ -339,6 +341,11 @@ def main() -> int:
     }
 
     rows: List[Dict[str, Any]] = []
+    # System metadata captured once per run
+    from datetime import datetime as _dt
+    bench_timestamp = _dt.now().isoformat(timespec='seconds')
+    hostname = socket.gethostname()
+    os_version = platform.platform()
     run_index = 0
     total_runs = 0
     # compute total runs for progress
@@ -397,6 +404,10 @@ def main() -> int:
                 flags = ["request_error"]
                 print(f"[run {run_index}/{total_runs}] {pid} request_error: {type(exc).__name__}: {exc}")
                 row = {
+                    "timestamp": bench_timestamp,
+                    "hostname": hostname,
+                    "os_version": os_version,
+                    "base_url": args.base_url,
                     "prompt_id": pid,
                     "run_index": run_index,
                     "is_warmup": is_warmup,
@@ -444,6 +455,10 @@ def main() -> int:
             print(f"[run {run_index}/{total_runs}] {pid} -> TTFT {ttft} ms, gen_tps {gtps}{end_label}")
 
             row = {
+                "timestamp": bench_timestamp,
+                "hostname": hostname,
+                "os_version": os_version,
+                "base_url": args.base_url,
                 "prompt_id": pid,
                 "run_index": run_index,
                 "is_warmup": is_warmup,
@@ -506,6 +521,10 @@ def main() -> int:
         print("No rows to write (possibly excluded all warmups).", file=sys.stderr)
 
     fieldnames = [
+        "timestamp",
+        "hostname",
+        "os_version",
+        "base_url",
         "prompt_id",
         "run_index",
         "is_warmup",
