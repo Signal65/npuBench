@@ -262,10 +262,18 @@ def main():
     if args.verbose:
         print(f"Using candidate column: {candidate_col}")
 
-    # Detect groups where all runs have identical non-empty outputs; we'll evaluate only the first and skip the rest
+    # Helper to parse truthy strings
+    def _truthy(v):
+        return str(v).strip().lower() in ('1','true','yes')
+
+    # Detect groups where all runs have identical non-empty outputs (excluding warmups);
+    # we'll evaluate only the first and skip the rest
     prompt_to_norm_outputs = {}
     for row in in_rows:
         pid0 = row.get('prompt_id')
+        # Skip warmups for duplicate detection
+        if _truthy(row.get('is_warmup')):
+            continue
         norm_out = normalize_for_dup(row.get(candidate_col) or '')
         if pid0 not in prompt_to_norm_outputs:
             prompt_to_norm_outputs[pid0] = set()
@@ -308,6 +316,25 @@ def main():
         hallucination = ''
 
         raw_judge_text = ''
+
+        # Skip warmup rows entirely to avoid skewing averages and duplicate logic
+        if _truthy(row.get('is_warmup')):
+            new_row = dict(row)
+            new_row.update({
+                'eval_status': 'skipped_warmup',
+                'eval_score_0_5': '',
+                'eval_verdict': '',
+                'eval_hallucination': '',
+                'eval_rationale': '',
+                'eval_model': args.model,
+                'is_duplicate': False,
+            })
+            if args.raw_column:
+                new_row['eval_raw_judge'] = ''
+            out_rows.append(new_row)
+            if args.verbose and args.progress_every and (idx % args.progress_every == 0 or idx == total):
+                print(f"progress {idx}/{total} | warmup-skip | no_ref={cnt_no_ref} prefilter={cnt_prefilter} judged={cnt_judged} parse_fail={cnt_parse_fail} errors={cnt_judge_error} skipped={cnt_skipped_dupe}")
+            continue
         # Skip duplicate outputs for this prompt after the first occurrence
         if pid in duplicate_prompt_ids:
             if pid in dupe_first_seen:

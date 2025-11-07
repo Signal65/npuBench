@@ -155,6 +155,8 @@ def main():
         passed_tests = int((~is_dup & verdict_ok).sum())
         return pd.Series({
             'timestamp': (g['timestamp'].dropna().astype(str).iloc[0] if 'timestamp' in g.columns and not g['timestamp'].dropna().empty else ''),
+            'backend_name': (g['backend_name'].dropna().astype(str).iloc[0] if 'backend_name' in g.columns and not g['backend_name'].dropna().empty else ''),
+            'model': (g['model'].dropna().astype(str).iloc[0] if 'model' in g.columns and not g['model'].dropna().empty else ''),
             'system_model': (g['system_model'].dropna().astype(str).iloc[0] if 'system_model' in g.columns and not g['system_model'].dropna().empty else ''),
             'processor_name': (g['processor_name'].dropna().astype(str).iloc[0] if 'processor_name' in g.columns and not g['processor_name'].dropna().empty else ''),
             'ttft_ms': safe_mean(g_nowarm['ttft_ms']) if 'ttft_ms' in g_nowarm.columns else float('nan'),
@@ -166,10 +168,10 @@ def main():
 
     st.subheader('Summary by file')
     # Stringify non-numerics for safe rendering
-    for col in ['timestamp','system_model','processor_name']:
+    for col in ['timestamp','backend_name','model','system_model','processor_name']:
         if col in summary.columns:
             summary[col] = summary[col].astype(str)
-    st.dataframe(summary[['source_file','timestamp','system_model','processor_name','ttft_ms','gen_tokens_per_s','eval_score','passed_total']], use_container_width=True)
+    st.dataframe(summary[['source_file','timestamp','backend_name','model','system_model','processor_name','ttft_ms','gen_tokens_per_s','eval_score','passed_total']], use_container_width=True)
 
     # Charts
     c1, c2 = st.columns(2)
